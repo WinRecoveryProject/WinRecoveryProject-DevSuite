@@ -25,7 +25,7 @@ def doctor(root: Path = ROOT) -> dict:
     try:
         manifest = read_json(root / ".codex-plugin/plugin.json")
         require(manifest["name"] == "winrecoveryproject-devsuite", "Wrong package name")
-        require(manifest["version"] == "0.2.6", "Wrong package version")
+        require(manifest["version"] == "0.2.7", "Wrong package version")
         require(manifest["interface"]["developerName"] == "Zilvereyes", "Wrong developer")
         require(len(manifest["interface"]["shortDescription"]) <= 30, "Subtitle exceeds 30 characters")
         require(len(manifest["interface"].get("defaultPrompt", [])) <= 3, "Too many prompts")
@@ -84,7 +84,9 @@ def main(argv=None):
     commands.add_parser("capabilities")
     process = commands.add_parser("process-plan"); process.add_argument("input", type=Path)
     environment = commands.add_parser("task-environment"); environment.add_argument("input", type=Path)
-    environment.add_argument("--name")
+    target = environment.add_mutually_exclusive_group()
+    target.add_argument("--name")
+    target.add_argument("--list", action="store_true")
     routing = commands.add_parser("route"); routing.add_argument("request")
     provider = commands.add_parser("provider-check")
     provider.add_argument("capability"); provider.add_argument("inventory", type=Path)
@@ -99,7 +101,7 @@ def main(argv=None):
         elif args.command == "process-plan":
             report = process_plan(read_json(args.input))
         elif args.command == "task-environment":
-            report = select_environment(read_json(args.input), args.name)
+            report = select_environment(read_json(args.input), args.name, list_only=args.list)
         elif args.command == "capabilities":
             report = read_json(ROOT / "references/capability-matrix.json")
         elif args.command == "route":
@@ -115,7 +117,7 @@ def main(argv=None):
         print(json.dumps({"status": "ERROR", "error": str(error), "executed": False}))
         return 1
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 1 if report.get("status") in {"FAIL", "UNAVAILABLE", "ERROR", "NOT_VERIFIED", "ACCESS_INSUFFICIENT", "INCOMPLETE"} else 0
+    return 1 if report.get("status") in {"FAIL", "UNAVAILABLE", "ERROR", "NOT_VERIFIED", "ACCESS_INSUFFICIENT", "INCOMPLETE", "AMBIGUOUS"} else 0
 
 
 if __name__ == "__main__":

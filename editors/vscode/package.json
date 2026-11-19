@@ -2,7 +2,7 @@
   "name": "winrecoveryproject-devsuite",
   "displayName": "WinRecoveryProject DevSuite",
   "publisher": "Zilvereyes",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Find the right bundled DevSuite workflow and verify its local package.",
   "license": "MIT",
   "icon": "icon.png",

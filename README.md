@@ -20,6 +20,9 @@ to 214 function-level rows, including the original source's non-triggered
 orchestrate-work workflow. CloudConvert source is unavailable; its actual App ID is
 verified and its original skill inventory remains UNKNOWN.
 
+The Claude Code edition packages local development workflows with the same router
+and separate host-native metadata. [Build and check the Claude package](https://github.com/WinRecoveryProject/WinRecoveryProject-DevSuite/tree/main/editors/claude)
+
 ```text
 python scripts/devsuite.py route "review this patch"
 python scripts/devsuite.py capabilities

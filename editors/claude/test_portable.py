@@ -1,0 +1,125 @@
+"""Exercise the shipped local CLI from a fresh extracted Claude package."""
+from pathlib import Path
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+import zipfile
+
+EDITOR = Path(__file__).resolve().parent
+ROOT = EDITOR.parents[1]
+SKILLS = {
+    "devsuite", "devsuite-planning", "devsuite-implement", "devsuite-debug",
+    "devsuite-review", "devsuite-test", "devsuite-quality", "devsuite-handoff",
+}
+
+
+class ClaudePackageTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        temp = tempfile.TemporaryDirectory(prefix="devsuite-claude-tests-")
+        cls.addClassCleanup(temp.cleanup)
+        cls.folder = Path(temp.name)
+        cls.package = cls.folder / "package.zip"
+        subprocess.run([sys.executable, "-I", "-B", str(EDITOR / "package.py"),
+                        "--out", str(cls.package)], check=True, capture_output=True)
+
+    def extract(self):
+        with tempfile.TemporaryDirectory(prefix="devsuite-claude-package-", dir=self.folder) as path:
+            output = Path(path)
+            with zipfile.ZipFile(self.package) as archive:
+                archive.extractall(output)
+            yield output
+
+    def run_cli(self, location, *arguments):
+        return subprocess.run([sys.executable, "-I", "-B", str(location / "scripts/devsuite.py"),
+                               *arguments], cwd=self.folder, capture_output=True, text=True,
+                              encoding="utf-8")
+
+    def test_build_is_reproducible_and_package_only_has_local_components(self):
+        other = self.folder / "rebuild.zip"
+        subprocess.run([sys.executable, "-I", "-B", str(EDITOR / "package.py"),
+                        "--out", str(other)], check=True, capture_output=True)
+        self.assertEqual(self.package.read_bytes(), other.read_bytes())
+        with zipfile.ZipFile(self.package) as archive:
+            entries = archive.namelist()
+            self.assertEqual(entries, sorted(set(entries)))
+            self.assertIsNone(archive.testzip())
+            manifest = json.loads(archive.read(".claude-plugin/plugin.json"))
+            upstream = json.loads((ROOT / ".codex-plugin/plugin.json").read_bytes())
+            for field in ("name", "version"):
+                self.assertEqual(manifest[field], upstream[field])
+            for field in ("mcpServers", "apps", "hooks", "commands", "agents"):
+                self.assertNotIn(field, manifest)
+            self.assertEqual({name.split("/")[1] for name in entries if name.startswith("skills/")}, SKILLS)
+            forbidden = {".app.json", ".codex-plugin", ".mcp.json", "hooks", "agents", "commands"}
+            self.assertFalse(any(forbidden.intersection(Path(name).parts) for name in entries))
+            self.assertEqual(archive.read("runtime/routing.py"), (ROOT / "runtime/routing.py").read_bytes())
+            self.assertEqual(archive.read("assets/logo.png"), (ROOT / "assets/logo.png").read_bytes())
+
+    def test_doctor_verifies_actual_files_and_rejects_integration_or_missing_references(self):
+        for location in self.extract():
+            healthy = self.run_cli(location, "doctor")
+            report = json.loads(healthy.stdout)
+            self.assertEqual(healthy.returncode, 0, healthy.stdout + healthy.stderr)
+            self.assertEqual(report["status"], "PASS")
+            self.assertEqual(set(report["workflows"]), SKILLS)
+            self.assertFalse(report["providersExecuted"])
+            (location / ".mcp.json").write_text("{}", encoding="utf-8")
+            (location / "references/platforms.md").unlink()
+            broken = self.run_cli(location, "doctor")
+            report = json.loads(broken.stdout)
+            self.assertEqual(broken.returncode, 1)
+            self.assertEqual(report["status"], "FAIL")
+            self.assertTrue(any(".mcp.json" in message for message in report["errors"]))
+            self.assertTrue(any("platforms.md" in message for message in report["errors"]))
+
+    def test_router_selects_portable_guides_without_executing_input(self):
+        for location in self.extract():
+            cases = (
+                ("Review the local diff", "devsuite-review"),
+                ("Gennemgå den lokale diff", "devsuite-review"),
+                ("Plan the test approach", "devsuite-test"),
+                ("Run a lintkontrol", "devsuite-quality"),
+                ("Review the GitHub Actions config file", "devsuite-review"),
+                ("Don't use GitHub, review the local diff", "devsuite-review"),
+                ("Review the literal request $(touch claude-injection-probe)", "devsuite-review"),
+            )
+            for request, skill in cases:
+                with self.subTest(request=request):
+                    process = self.run_cli(location, "route", "--", request)
+                    report = json.loads(process.stdout)
+                    self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+                    self.assertEqual((report["status"], report["skill"]), ("READY", skill))
+                    self.assertTrue((location / report["entrypoint"]).is_file())
+                    self.assertFalse(report["executionAuthorized"])
+                    self.assertFalse(report["externalActionAuthorized"])
+                    self.assertFalse(report["providersExecuted"])
+            self.assertFalse((self.folder / "claude-injection-probe").exists())
+
+    def test_router_preserves_provider_scope_and_reports_unavailability(self):
+        for location in self.extract():
+            cases = (
+                ("Find mine gemte Codex cloud-miljøer", "devsuite-tasks"),
+                ("Start a Codex task to test this change", "devsuite-tasks"),
+                ("Run the build in the background", "devsuite-jobs"),
+                ("Convert this PDF through CloudConvert", "devsuite-convert"),
+                ("Request a Codex Security deep security scan", "devsuite-security-assess"),
+                ("Review pull request 14 on GitHub.", "devsuite-review"),
+                ("Review https://github.com/example/project/pull/14", "devsuite-review"),
+            )
+            for request, skill in cases:
+                with self.subTest(request=request):
+                    process = self.run_cli(location, "route", "--", request)
+                    report = json.loads(process.stdout)
+                    self.assertEqual(process.returncode, 1, process.stdout + process.stderr)
+                    self.assertEqual((report["status"], report["requestedSkill"]), ("UNAVAILABLE", skill))
+                    self.assertNotIn("entrypoint", report)
+                    self.assertFalse(report["executionAuthorized"])
+                    self.assertFalse(report["externalActionAuthorized"])
+                    self.assertFalse(report["providersExecuted"])
+
+
+if __name__ == "__main__":
+    unittest.main()

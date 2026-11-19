@@ -1,0 +1,65 @@
+{
+  "name": "winrecoveryproject-devsuite",
+  "displayName": "WinRecoveryProject DevSuite",
+  "publisher": "Zilvereyes",
+  "version": "0.2.6",
+  "description": "Find the right bundled DevSuite workflow and verify its local package.",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WinRecoveryProject/WinRecoveryProject-DevSuite"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./extension.cjs",
+  "files": [
+    "README.md",
+    "LICENSE",
+    "extension.cjs",
+    "runner.cjs",
+    "icon.png",
+    "core/**",
+    "core/.codex-plugin/plugin.json",
+    "core/.app.json"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Uses an explicitly invoked local Python interpreter and a bundled DevSuite package."
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "wrpDevSuite.route",
+        "title": "Find Workflow for Request",
+        "category": "WinRecoveryProject DevSuite"
+      },
+      {
+        "command": "wrpDevSuite.doctor",
+        "title": "Check Local Package",
+        "category": "WinRecoveryProject DevSuite"
+      }
+    ],
+    "configuration": {
+      "title": "WinRecoveryProject DevSuite",
+      "properties": {
+        "wrpDevSuite.pythonPath": {
+          "type": "string",
+          "scope": "machine",
+          "default": "",
+          "description": "Optional absolute path to Python 3.10 or later outside the workspace. When empty, Python is resolved from the VS Code host PATH."
+        }
+      }
+    }
+  }
+}

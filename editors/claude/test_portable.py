@@ -37,6 +37,18 @@ class ClaudePackageTest(unittest.TestCase):
                                *arguments], cwd=self.folder, capture_output=True, text=True,
                               encoding="utf-8")
 
+    def test_review_modes_ship_and_shared_files_match_studio_hashes(self):
+        import hashlib
+        pinned = json.loads((ROOT / "references/consolidation/shared-review-modes.json").read_text(encoding="utf-8"))["files"]
+        with zipfile.ZipFile(self.package) as archive:
+            names = set(archive.namelist())
+            for mode in ("code", "request", "receive", "decide", "verify", "release", "gate"):
+                self.assertIn(f"skills/devsuite-review/modes/{mode}.md", names)
+            for name, digest in pinned.items():
+                data = archive.read(f"skills/devsuite-review/modes/{name}").decode("utf-8").replace("\r\n", "\n")
+                self.assertEqual(hashlib.sha256(data.encode("utf-8")).hexdigest(), digest, name)
+            self.assertFalse([n for n in names if "devsuite-quality" in n])
+
     def test_build_is_reproducible_and_package_only_has_local_components(self):
         other = self.folder / "rebuild.zip"
         subprocess.run([sys.executable, "-I", "-B", str(EDITOR / "package.py"),

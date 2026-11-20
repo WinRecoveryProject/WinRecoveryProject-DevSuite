@@ -7,7 +7,7 @@ const processFile = promisify(execFile);
 const pythonFlags = ['-I', '-B', '-X', 'utf8'];
 const knownSkills = new Set([
   'devsuite', 'devsuite-convert', 'devsuite-debug', 'devsuite-environment', 'devsuite-handoff',
-  'devsuite-implement', 'devsuite-jobs', 'devsuite-planning', 'devsuite-quality',
+  'devsuite-implement', 'devsuite-jobs', 'devsuite-planning',
   'devsuite-review', 'devsuite-security-assess', 'devsuite-security-fix', 'devsuite-tasks', 'devsuite-test',
 ]);
 

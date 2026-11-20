@@ -11,7 +11,7 @@ EDITOR = Path(__file__).resolve().parent
 ROOT = EDITOR.parents[1]
 SKILLS = {
     "devsuite", "devsuite-planning", "devsuite-implement", "devsuite-debug",
-    "devsuite-review", "devsuite-test", "devsuite-quality", "devsuite-handoff",
+    "devsuite-review", "devsuite-test", "devsuite-handoff",
 }
 
 
@@ -81,7 +81,7 @@ class ClaudePackageTest(unittest.TestCase):
                 ("Review the local diff", "devsuite-review"),
                 ("Gennemgå den lokale diff", "devsuite-review"),
                 ("Plan the test approach", "devsuite-test"),
-                ("Run a lintkontrol", "devsuite-quality"),
+                ("Run a lintkontrol", "devsuite-review"),
                 ("Review the GitHub Actions config file", "devsuite-review"),
                 ("Don't use GitHub, review the local diff", "devsuite-review"),
                 ("Review the literal request $(touch claude-injection-probe)", "devsuite-review"),

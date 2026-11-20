@@ -70,7 +70,7 @@ def doctor(root: Path = ROOT) -> dict:
                     continue
                 resolved = (file.parent / link.split("#", 1)[0]).resolve()
                 require(resolved.is_relative_to(root.resolve()) and resolved.is_file(), f"Uncontained/missing link in {file.name}: {link}")
-        require(len(list(root.glob("skills/*/SKILL.md"))) == 14, "Expected 14 focused skills")
+        require(len(list(root.glob("skills/*/SKILL.md"))) == 13, "Expected 13 focused skills")
     except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
         errors.append(str(error))
     return {"status": "FAIL" if errors else "PASS", "scope": "local package structure/contracts only",

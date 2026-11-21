@@ -49,6 +49,21 @@ class ClaudePackageTest(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data.encode("utf-8")).hexdigest(), digest, name)
             self.assertFalse([n for n in names if "devsuite-quality" in n])
 
+    def test_planning_modes_ship_and_match_studio_hashes(self):
+        import hashlib
+        pinned = json.loads((ROOT / "references/consolidation/shared-plan-modes.json").read_text(encoding="utf-8"))["files"]
+        with zipfile.ZipFile(self.package) as archive:
+            names = set(archive.namelist())
+            for name, digest in pinned.items():
+                path = f"skills/devsuite-planning/modes/{name}"
+                self.assertIn(path, names)
+                data = archive.read(path).decode("utf-8").replace("\r\n", "\n")
+                self.assertEqual(hashlib.sha256(data.encode("utf-8")).hexdigest(), digest, name)
+            guide = archive.read("skills/devsuite-planning/SKILL.md").decode("utf-8")
+            self.assertIn('<a id="mode-map"></a>', guide)
+            self.assertNotIn("## Optional task-boundary board", guide)
+            self.assertFalse([n for n in names if "companion" in n])
+
     def test_build_is_reproducible_and_package_only_has_local_components(self):
         other = self.folder / "rebuild.zip"
         subprocess.run([sys.executable, "-I", "-B", str(EDITOR / "package.py"),

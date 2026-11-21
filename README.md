@@ -1,4 +1,4 @@
-# WinRecoveryProject DevSuite 0.2.7
+# WinRecoveryProject DevSuite 0.2.8
 
 One owned development workflow combines planning/coordination, implementation,
 debugging, testing, independent review, quality gates, security assessment/remediation,
@@ -72,6 +72,8 @@ Version 0.2.1 preserves explicit remote-task and background-job intent when the
 workload contains test/fix/implement verbs. Code-maintenance requests keep their
 normal development route; negated lifecycle clauses do not start an execution
 workflow. Route suggestions never authorize execution.
+
+Version 0.2.8 adds platform guidance for PowerShell (Windows PowerShell 5.1 and PowerShell 7), Batch/CMD launchers, and Lua including World of Warcraft addons. The debug, implement and test workflows load them from `references/platforms.md`.
 
 Version 0.2.7 lists available and unavailable saved environment configurations through the existing Codex Tasks connection. An unnamed selection requires one runnable candidate. The attached Cloud Environment desktop uses its own existing runtime access.
 

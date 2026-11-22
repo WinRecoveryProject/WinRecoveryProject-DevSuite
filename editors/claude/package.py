@@ -34,6 +34,9 @@ LOCAL_FILES = (
     "references/platforms/javascript-typescript.md",
     "references/platforms/laravel-php.md",
     "references/platforms/python.md",
+    "references/platforms/powershell.md",
+    "references/platforms/batch-cmd.md",
+    "references/platforms/lua-wow.md",
 )
 MARKDOWN_CHANGES = {
     "devsuite-review": (

@@ -1,6 +1,6 @@
 # WinRecoveryProject DevSuite for Visual Studio Code
 
-Works in desktop VS Code 1.90 or later with Python 3.10 or later. The VSIX includes DevSuite 0.3.1 and its 13 workflow guides.
+Works in desktop VS Code 1.90 or later with Python 3.10 or later. The VSIX includes DevSuite 0.4.0 and its 13 workflow guides.
 
 - **Find Workflow for Request** maps a request to the bundled guide and opens its Markdown file. The text is passed as one literal argument to DevSuite’s local router. This command does not run the guide or send the request to a service.
 - **Check Local Package** displays the DevSuite package doctor result in the **WinRecoveryProject DevSuite** Output channel. Its result describes local files, workflow links and package contracts. Provider readiness requires separate evidence.

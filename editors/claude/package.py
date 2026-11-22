@@ -34,6 +34,9 @@ LOCAL_FILES = (
     "references/platforms/javascript-typescript.md",
     "references/platforms/laravel-php.md",
     "references/platforms/python.md",
+    "references/platforms/powershell.md",
+    "references/platforms/batch-cmd.md",
+    "references/platforms/lua-wow.md",
 )
 MARKDOWN_CHANGES = {
     "devsuite-review": (
@@ -86,6 +89,9 @@ def package(output):
     files = {
         **{name: (ROOT / name).read_bytes() for name in (*LICENSE_FILES, *LOCAL_FILES)},
         **{f"skills/{name}/SKILL.md": local_guide(name) for name in LOCAL_WORKFLOWS},
+        # Review mode files ship unchanged; the shared ones must stay byte-identical with Studio.
+        **{f"skills/devsuite-review/modes/{mode.name}": mode.read_bytes()
+           for mode in sorted((ROOT / "skills" / "devsuite-review" / "modes").glob("*.md"))},
         manifest_path: manifest,
         "scripts/devsuite.py": (EDITOR / "devsuite.py").read_bytes(),
         "README.md": (EDITOR / "README.md").read_bytes(),

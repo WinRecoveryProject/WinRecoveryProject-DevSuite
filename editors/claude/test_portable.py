@@ -11,7 +11,7 @@ EDITOR = Path(__file__).resolve().parent
 ROOT = EDITOR.parents[1]
 SKILLS = {
     "devsuite", "devsuite-planning", "devsuite-implement", "devsuite-debug",
-    "devsuite-review", "devsuite-test", "devsuite-quality", "devsuite-handoff",
+    "devsuite-review", "devsuite-test", "devsuite-handoff",
 }
 
 
@@ -36,6 +36,18 @@ class ClaudePackageTest(unittest.TestCase):
         return subprocess.run([sys.executable, "-I", "-B", str(location / "scripts/devsuite.py"),
                                *arguments], cwd=self.folder, capture_output=True, text=True,
                               encoding="utf-8")
+
+    def test_review_modes_ship_and_shared_files_match_studio_hashes(self):
+        import hashlib
+        pinned = json.loads((ROOT / "references/consolidation/shared-review-modes.json").read_text(encoding="utf-8"))["files"]
+        with zipfile.ZipFile(self.package) as archive:
+            names = set(archive.namelist())
+            for mode in ("code", "request", "receive", "decide", "verify", "release", "gate"):
+                self.assertIn(f"skills/devsuite-review/modes/{mode}.md", names)
+            for name, digest in pinned.items():
+                data = archive.read(f"skills/devsuite-review/modes/{name}").decode("utf-8").replace("\r\n", "\n")
+                self.assertEqual(hashlib.sha256(data.encode("utf-8")).hexdigest(), digest, name)
+            self.assertFalse([n for n in names if "devsuite-quality" in n])
 
     def test_build_is_reproducible_and_package_only_has_local_components(self):
         other = self.folder / "rebuild.zip"
@@ -81,7 +93,7 @@ class ClaudePackageTest(unittest.TestCase):
                 ("Review the local diff", "devsuite-review"),
                 ("Gennemgå den lokale diff", "devsuite-review"),
                 ("Plan the test approach", "devsuite-test"),
-                ("Run a lintkontrol", "devsuite-quality"),
+                ("Run a lintkontrol", "devsuite-review"),
                 ("Review the GitHub Actions config file", "devsuite-review"),
                 ("Don't use GitHub, review the local diff", "devsuite-review"),
                 ("Review the literal request $(touch claude-injection-probe)", "devsuite-review"),

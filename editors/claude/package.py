@@ -90,8 +90,8 @@ def package(output):
         **{name: (ROOT / name).read_bytes() for name in (*LICENSE_FILES, *LOCAL_FILES)},
         **{f"skills/{name}/SKILL.md": local_guide(name) for name in LOCAL_WORKFLOWS},
         # Mode files ship unchanged; the shared ones must stay byte-identical with Studio.
-        **{f"skills/{name}/modes/{mode.name}": mode.read_bytes()
-           for name in LOCAL_WORKFLOWS for mode in sorted((ROOT / "skills" / name / "modes").glob("*.md"))},
+        **{f"skills/{name}/modes/{mode.relative_to(ROOT / 'skills' / name / 'modes').as_posix()}": mode.read_bytes()
+           for name in LOCAL_WORKFLOWS for mode in sorted((ROOT / "skills" / name / "modes").rglob("*")) if mode.is_file()},
         manifest_path: manifest,
         "scripts/devsuite.py": (EDITOR / "devsuite.py").read_bytes(),
         "README.md": (EDITOR / "README.md").read_bytes(),

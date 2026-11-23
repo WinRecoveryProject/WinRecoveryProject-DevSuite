@@ -11,7 +11,7 @@ EDITOR = Path(__file__).resolve().parent
 ROOT = EDITOR.parents[1]
 SKILLS = {
     "devsuite", "devsuite-planning", "devsuite-implement", "devsuite-debug",
-    "devsuite-review", "devsuite-test", "devsuite-handoff",
+    "devsuite-review", "devsuite-test", "devsuite-handoff", "devsuite-git",
 }
 
 
@@ -76,6 +76,18 @@ class ClaudePackageTest(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data.encode("utf-8")).hexdigest(), digest, name)
             for script in ("review-package", "sdd-workspace", "task-brief"):
                 self.assertIn(f"skills/devsuite-implement/modes/subagent/scripts/{script}", names)
+
+    def test_git_skill_ships_with_modes_and_guardrail_scripts(self):
+        import hashlib
+        pinned = json.loads((ROOT / "references/consolidation/shared-git-modes.json").read_text(encoding="utf-8"))["files"]
+        with zipfile.ZipFile(self.package) as archive:
+            names = set(archive.namelist())
+            self.assertIn("skills/devsuite-git/SKILL.md", names)
+            for name, digest in pinned.items():
+                path = f"skills/devsuite-git/modes/{name}"
+                self.assertIn(path, names)
+                data = archive.read(path).decode("utf-8").replace("\r\n", "\n")
+                self.assertEqual(hashlib.sha256(data.encode("utf-8")).hexdigest(), digest, name)
 
     def test_build_is_reproducible_and_package_only_has_local_components(self):
         other = self.folder / "rebuild.zip"

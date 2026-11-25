@@ -64,7 +64,7 @@ class ClaudePackageTest(unittest.TestCase):
             self.assertNotIn("## Optional task-boundary board", guide)
             self.assertFalse([n for n in names if "companion" in n])
 
-    def test_execution_modes_and_subagent_tree_ship_and_match_studio_hashes(self):
+    def test_execution_modes_and_subagent_tree_ship_and_match_pinned_hashes(self):
         import hashlib
         pinned = json.loads((ROOT / "references/consolidation/shared-execute-modes.json").read_text(encoding="utf-8"))["files"]
         with zipfile.ZipFile(self.package) as archive:
@@ -74,7 +74,7 @@ class ClaudePackageTest(unittest.TestCase):
                 self.assertIn(path, names)
                 data = archive.read(path).decode("utf-8").replace("\r\n", "\n")
                 self.assertEqual(hashlib.sha256(data.encode("utf-8")).hexdigest(), digest, name)
-            for script in ("review-package", "sdd-workspace", "task-brief"):
+            for script in ("review-package", "sdd-artifact", "sdd-workspace", "task-brief"):
                 self.assertIn(f"skills/devsuite-implement/modes/subagent/scripts/{script}", names)
 
     def test_git_skill_ships_with_modes_and_guardrail_scripts(self):

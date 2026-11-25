@@ -1,4 +1,4 @@
-"""Union guarantee for the consolidated devsuite-implement skill (shared with Plugin-Skill-Studio studio-execute)."""
+"""Union and pinned-source guarantees for the consolidated devsuite-implement skill."""
 from __future__ import annotations
 
 import hashlib
@@ -15,11 +15,12 @@ from tests.test_review_consolidation import check_matrix, read_json  # noqa: E40
 CONSOLIDATION = ROOT / "references" / "consolidation"
 MODES = ROOT / "skills" / "devsuite-implement" / "modes"
 SHARED = ("execute.md", "subagent.md", "implement.md", "spec-run.md", "parallel.md", "durable.md",
-          "subagent/scripts/review-package", "subagent/scripts/sdd-workspace", "subagent/scripts/task-brief")
+          "subagent/scripts/review-package", "subagent/scripts/sdd-artifact",
+          "subagent/scripts/sdd-workspace", "subagent/scripts/task-brief")
 
 
 class ExecuteConsolidationTests(unittest.TestCase):
-    def test_shared_execute_modes_match_hashes(self):
+    def test_shared_execute_modes_match_pinned_hashes(self):
         pinned = read_json(CONSOLIDATION / "shared-execute-modes.json")["files"]
         for name in SHARED:
             self.assertIn(name, pinned)

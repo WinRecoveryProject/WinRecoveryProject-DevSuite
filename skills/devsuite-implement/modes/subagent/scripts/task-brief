@@ -4,7 +4,7 @@
 # through the controller's context.
 #
 # Usage: task-brief PLAN_FILE TASK_NUMBER [OUTFILE]
-# Default OUTFILE: <repo-root>/.skillquiver/sdd/<plan-basename>/task-<N>-brief.md
+# Default OUTFILE: <private-host-temp>/<repo>/<plan-basename>/task-<N>-brief.md
 # (per plan and per worktree; concurrent runs of the SAME plan in the same
 # working tree share it).
 set -euo pipefail
@@ -17,6 +17,10 @@ fi
 plan=$1
 n=$2
 [ -f "$plan" ] || { echo "no such plan file: $plan" >&2; exit 2; }
+case "$n" in
+  ''|*[!0-9]*) echo "TASK_NUMBER must contain only decimal digits: $n" >&2; exit 2 ;;
+esac
+helper="$(cd "$(dirname "$0")" && pwd -P)/sdd-artifact"
 
 if [ $# -eq 3 ]; then
   out=$3
@@ -31,7 +35,7 @@ awk -v n="$n" '
     intask = ($0 ~ ("^#+[ \t]+Task[ \t]+" n "([^0-9]|$)"))
   }
   intask { print }
-' "$plan" > "$out"
+' "$plan" | python "$helper" write "$out"
 
 if [ ! -s "$out" ]; then
   echo "task ${n} not found in ${plan} (no heading matching 'Task ${n}')" >&2

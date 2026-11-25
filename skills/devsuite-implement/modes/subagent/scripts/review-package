@@ -5,7 +5,7 @@
 # tasks intact.
 #
 # Usage: review-package PLAN_FILE BASE HEAD [OUTFILE]
-# Default OUTFILE: <repo-root>/.skillquiver/sdd/<plan-basename>/review-<base7>..<head7>.diff
+# Default OUTFILE: <private-host-temp>/<repo>/<plan-basename>/review-<base7>..<head7>.diff
 # (named per range, so a re-review after fixes gets a distinct fresh file).
 set -euo pipefail
 
@@ -18,6 +18,7 @@ plan=$1
 base=$2
 head=$3
 [ -f "$plan" ] || { echo "no such plan file: $plan" >&2; exit 2; }
+helper="$(cd "$(dirname "$0")" && pwd -P)/sdd-artifact"
 
 git rev-parse --verify --quiet "$base" >/dev/null || { echo "bad BASE: $base" >&2; exit 2; }
 git rev-parse --verify --quiet "$head" >/dev/null || { echo "bad HEAD: $head" >&2; exit 2; }
@@ -40,7 +41,7 @@ fi
   echo
   echo "## Diff"
   git diff -U10 "${base}..${head}"
-} > "$out"
+} | python "$helper" write "$out"
 
 commits=$(git rev-list --count "${base}..${head}")
 echo "wrote ${out}: ${commits} commit(s), $(wc -c < "$out" | tr -d ' ') bytes"

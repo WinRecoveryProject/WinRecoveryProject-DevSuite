@@ -19,4 +19,4 @@ Pick one mode, read only that mode file, and follow it.
 
 In this package, the review skill is [devsuite-review](../devsuite-review/SKILL.md) (request mode before merge). The guardrail scripts live in `modes/safety/scripts/` and need bash and Python 3.
 
-The mode files and everything under `modes/safety/` are shared byte-for-byte with Plugin-Skill-Studio `studio-git`. Change them only together with Studio, and update `references/consolidation/shared-git-modes.json` in both packages.
+The finish, conflicts and safety mode files (including `modes/safety/`) remain shared byte-for-byte with Plugin-Skill-Studio `studio-git`. The worktree mode is a DevSuite security-hardened adaptation that separates checkout isolation from repository-code execution. Update `references/consolidation/shared-git-modes.json` whenever a pinned local mode changes.

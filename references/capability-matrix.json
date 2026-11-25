@@ -4771,7 +4771,7 @@
       "function": "isolated workspace via native tools or git worktree fallback",
       "owner": "devsuite-git",
       "mode": "worktree",
-      "implementation": "owned workflow (shared mode file, byte-identical with Plugin-Skill-Studio studio-git)",
+      "implementation": "owned workflow (security-hardened MIT adaptation of Plugin-Skill-Studio worktree mode)",
       "runtime": [],
       "references": [
         "skills/devsuite-git/modes/worktree.md",

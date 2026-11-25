@@ -4838,9 +4838,11 @@
         "references/consolidation/git-matrix.json"
       ],
       "tests": [
-        "tests/test_git_consolidation.py::test_git_matrix_union"
+        "tests/test_git_consolidation.py::test_git_matrix_union",
+        "tests/test_git_safety.py::GitSafetyClassifierTests",
+        "tests/test_git_safety.py::InstalledGitSafetyHookTests"
       ],
-      "evidenceType": "static workflow contract and capability matrix",
+      "evidenceType": "static workflow contract, fail-closed classifier regression contract and capability matrix",
       "availability": "local",
       "externalProvider": ""
     },

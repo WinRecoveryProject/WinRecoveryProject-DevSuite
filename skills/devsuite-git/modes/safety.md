@@ -14,11 +14,12 @@ Install and maintain deterministic pre-execution guardrails that intercept and b
 <a id="src-git-safety-guardrails-core-invariants"></a>
 ### Core Invariants
 
-1. **Deterministic Interception**: Automatically block destructive Git commands (`git push --force`, `git reset --hard`, `git clean -f/-fd`, `git branch -D`, `git checkout .`, `git restore .`) before execution.
+1. **Deterministic Interception**: Automatically block destructive Git commands (`git push --force`, `git reset --hard`, `git clean -f/-fd`, `git branch -D`, `git checkout .`, `git restore .`) before execution, including equivalent long options, reordered flags, force refspecs, aliases, Git global options, and chained commands.
 2. **Explicit Authority Gate**: Intercepted commands return an explicit non-zero exit code notifying the agent that it lacks authority to execute destructive operations.
 3. **Scope Clarification**: Always ask the user whether to apply guardrails locally to the project (`.claude/settings.json`) or globally (`~/.claude/settings.json`).
 4. **Settings Merge Safety**: Seamlessly merge guardrail hooks into existing `PreToolUse` configurations without overwriting other tools or settings.
 5. **Mandatory Interception Test**: Verify that the safety hook triggers correctly on simulated forbidden commands before concluding setup.
+6. **Fail-Closed Classification**: Missing dependencies, malformed hook payloads, unknown Git aliases, and shell syntax the classifier cannot safely interpret return exit code 2.
 
 ---
 
@@ -37,8 +38,8 @@ Install and maintain deterministic pre-execution guardrails that intercept and b
 
 | Component | Responsibility | Location |
 |---|---|---|
-| **Classifier Hook Script** | Inspect and block forbidden git patterns | `safety/scripts/block-dangerous-git.sh` |
-| **Python Command Parser** | Parse complex shell command chains | `safety/scripts/classify_git_command.py` |
+| **Classifier Hook Script** | Locate the bundled parser and map every dependency or parser failure to exit code 2 | `safety/scripts/block-dangerous-git.sh` |
+| **Python Command Parser** | Validate hook JSON and classify shell chains and normalized Git arguments | `safety/scripts/classify_git_command.py` |
 | **Settings Integration** | Hook registration in agent environment | `.claude/settings.json` or `~/.claude/settings.json` |
 
 ---
@@ -53,13 +54,14 @@ Install and maintain deterministic pre-execution guardrails that intercept and b
 - **Why**: Scoped installation avoids unexpected side-effects across external personal repositories.
 
 <a id="src-git-safety-guardrails-step-2-copy-hook-script--make-executable"></a>
-#### Step 2: Copy Hook Script & Make Executable
-- **Action**: Copy `safety/scripts/block-dangerous-git.sh` to `.claude/hooks/block-dangerous-git.sh` and run `chmod +x`.
-- **Key Point**: Ensure parent directories exist before copying.
+#### Step 2: Copy Hook Scripts & Make Executable
+- **Action**: Copy both files from `safety/scripts/` to `.claude/hooks/`, then run `chmod +x .claude/hooks/block-dangerous-git.sh`.
+- **Key Point**: Keep `classify_git_command.py` beside the shell hook and confirm `command -v python3` succeeds before registration. The hook blocks if either dependency is unavailable.
 - **Inline Checklist**:
   - [ ] Target directory created
-  - [ ] Script copied and executable permissions set (`chmod +x`)
-  - [ ] Python classifier script colocated if needed
+  - [ ] Shell hook copied and executable permissions set (`chmod +x`)
+  - [ ] Python classifier copied into the same directory
+  - [ ] `python3` dependency present
 
 <a id="src-git-safety-guardrails-step-3-register-hook-in-settings-configuration"></a>
 #### Step 3: Register Hook in Settings Configuration
@@ -69,12 +71,14 @@ Install and maintain deterministic pre-execution guardrails that intercept and b
 
 <a id="src-git-safety-guardrails-step-4-verify-guardrail-interception-test-gate"></a>
 #### Step 4: Verify Guardrail Interception (Test Gate)
-- **Action**: Test the hook with a simulated blocked command:
+- **Action**: Test the hook with blocked, malformed, and allowed simulations:
   ```bash
-  echo '{"tool_input":{"command":"git push origin main --force"}}' | .claude/hooks/block-dangerous-git.sh
+  printf '%s\n' '{"tool_input":{"command":"git clean --force -d"}}' | .claude/hooks/block-dangerous-git.sh
+  printf '%s\n' 'not-json' | .claude/hooks/block-dangerous-git.sh
+  printf '%s\n' '{"tool_input":{"command":"git status"}}' | .claude/hooks/block-dangerous-git.sh
   ```
-- **Key Point**: Verify that the command exits with code 2 and outputs a descriptive blocked message.
-- **Why**: Proving the hook intercepts dangerous commands guarantees that unverified agents cannot accidentally wipe Git history.
+- **Key Point**: Verify the first two commands exit with code 2 and descriptive blocked messages, while `git status` exits zero.
+- **Why**: The three cases establish destructive syntax and invalid state fail closed without preventing routine read-only Git use.
 
 ---
 

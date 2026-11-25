@@ -1,11 +1,13 @@
 import argparse
 import json
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -108,6 +110,7 @@ class CoordinatorTests(unittest.TestCase):
             root = Path(directory)
             subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
             (root / "AGENTS.md").write_text("# Existing project instructions\n", encoding="utf-8")
+            (root / ".gitignore").write_text("build/\n", encoding="utf-8")
             def operation(action, apply=False):
                 return project.project_operation(argparse.Namespace(action=action, apply=apply,
                     project_root=str(root), project_id="fixture", project_name="Fixture", task_prefix="FX",
@@ -118,12 +121,125 @@ class CoordinatorTests(unittest.TestCase):
             operation("init", True)
             self.assertEqual(state.list_board(root)["activeCount"], 0)
             self.assertIn("devsuite-planning", (root / "AGENTS.md").read_text(encoding="utf-8"))
+            self.assertIn("build/", (root / ".gitignore").read_text(encoding="utf-8"))
             operation("deactivate", True)
             with self.assertRaises(state.BoardError):
                 state.list_board(root)
             self.assertIn("Existing project instructions", (root / "AGENTS.md").read_text(encoding="utf-8"))
+            self.assertIn("build/", (root / ".gitignore").read_text(encoding="utf-8"))
             operation("reactivate", True)
             self.assertEqual(state.list_board(root)["activeCount"], 0)
+            self.assertIn("build/", (root / ".gitignore").read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(shutil.which("git"), "Git is needed for the project lifecycle boundary")
+    def test_lifecycle_rejects_linked_repository_documents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "repo"
+            root.mkdir()
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+            external = base / "outside.txt"
+            external.write_text("host-only bytes\n", encoding="utf-8")
+            expected = external.read_bytes()
+            args = argparse.Namespace(
+                action="init",
+                apply=False,
+                project_root=str(root),
+                project_id="fixture",
+                project_name="Fixture",
+                task_prefix="FX",
+                confirm_project_id="fixture",
+                confirm_legacy_runtime_stopped=False,
+            )
+
+            for name in ("AGENTS.md", ".gitignore"):
+                linked = root / name
+                try:
+                    linked.symlink_to(external)
+                except (NotImplementedError, OSError) as error:
+                    self.skipTest(f"file symlinks are unavailable: {error}")
+                for apply in (False, True):
+                    with self.subTest(name=name, apply=apply):
+                        args.apply = apply
+                        with self.assertRaisesRegex(
+                            project.LifecycleError, "symlink, junction, or reparse point"
+                        ):
+                            project.project_operation(args)
+                        self.assertTrue(linked.is_symlink())
+                        self.assertEqual(external.read_bytes(), expected)
+                        self.assertFalse((root / ".codex").exists())
+                linked.unlink()
+
+    @unittest.skipUnless(shutil.which("git"), "Git is needed for the project lifecycle boundary")
+    def test_every_lifecycle_action_rejects_linked_documents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "repo"
+            root.mkdir()
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+            board = root / ".codex/coordination"
+            board.mkdir(parents=True)
+            (board / "project.yaml").write_text(MARKER, encoding="utf-8")
+            external = base / "outside.txt"
+            external.write_text("host-only bytes\n", encoding="utf-8")
+            expected = external.read_bytes()
+
+            for action in ("deactivate", "migrate", "reactivate", "purge"):
+                for name in ("AGENTS.md", ".gitignore"):
+                    linked = root / name
+                    try:
+                        linked.symlink_to(external)
+                    except (NotImplementedError, OSError) as error:
+                        self.skipTest(f"file symlinks are unavailable: {error}")
+                    with self.subTest(action=action, name=name):
+                        args = argparse.Namespace(
+                            action=action,
+                            apply=False,
+                            project_root=str(root),
+                            project_id=None,
+                            project_name=None,
+                            task_prefix=None,
+                            confirm_project_id="fixture",
+                            confirm_legacy_runtime_stopped=False,
+                        )
+                        with self.assertRaisesRegex(
+                            project.LifecycleError, "symlink, junction, or reparse point"
+                        ):
+                            project.project_operation(args)
+                        self.assertTrue(linked.is_symlink())
+                        self.assertEqual(external.read_bytes(), expected)
+                    linked.unlink()
+
+    def test_document_reader_rejects_linked_ancestor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "repo"
+            external = base / "outside"
+            root.mkdir()
+            external.mkdir()
+            (external / "AGENTS.md").write_text("host-only bytes\n", encoding="utf-8")
+            linked = root / "linked"
+            try:
+                linked.symlink_to(external, target_is_directory=True)
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"directory symlinks are unavailable: {error}")
+
+            with self.assertRaisesRegex(project.LifecycleError, "document ancestor"):
+                project._read_document(
+                    linked / "AGENTS.md", project_root=root, required=False
+                )
+            self.assertTrue(linked.is_symlink())
+            self.assertEqual(
+                (external / "AGENTS.md").read_text(encoding="utf-8"),
+                "host-only bytes\n",
+            )
+
+    def test_windows_reparse_metadata_is_linklike(self):
+        metadata = SimpleNamespace(
+            st_mode=stat.S_IFREG,
+            st_file_attributes=project.FILE_ATTRIBUTE_REPARSE_POINT,
+        )
+        self.assertTrue(project._metadata_is_linklike(metadata))
 
     @unittest.skipUnless(shutil.which("git"), "Git is needed for the migration boundary")
     def test_legacy_migration_preserves_history_and_disables(self):

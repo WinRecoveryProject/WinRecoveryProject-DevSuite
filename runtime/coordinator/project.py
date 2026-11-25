@@ -10,10 +10,12 @@ components may still exist.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -57,6 +59,7 @@ TASK_PREFIX = re.compile(r"[A-Z][A-Z0-9-]{0,15}")
 MIGRATION_BACKUP_NAME = "project.schema-1.yaml"
 MAX_LEGACY_FILES = 10_000
 MAX_TASK_TAIL_BYTES = 4096
+FILE_ATTRIBUTE_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 TERMINAL_TASK_STATUSES = {
     "CANCELED",
     "CANCELLED",
@@ -74,11 +77,13 @@ class LifecycleError(RuntimeError):
 @dataclass(frozen=True)
 class Document:
     path: Path
+    project_root: Path
     raw: bytes
     text: str
     newline: str
     bom: bool
     existed: bool = True
+    identity: tuple[int, int] | None = None
 
     def encode(self, text: str) -> bytes:
         payload = text.encode("utf-8")
@@ -106,14 +111,131 @@ class Project:
         return int(self.fields["schema_version"])
 
 
-def _read_document(path: Path, *, required: bool = True) -> Document | None:
-    if not path.exists():
+def _metadata_is_linklike(metadata: os.stat_result) -> bool:
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _lstat(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+
+
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+def _same_file_snapshot(left: os.stat_result, right: os.stat_result) -> bool:
+    return _same_file_identity(left, right) and (
+        left.st_size,
+        left.st_mtime_ns,
+        left.st_ctime_ns,
+    ) == (
+        right.st_size,
+        right.st_mtime_ns,
+        right.st_ctime_ns,
+    )
+
+
+def _require_document_location(project_root: Path, path: Path) -> None:
+    root_metadata = _lstat(project_root)
+    if (
+        root_metadata is None
+        or _metadata_is_linklike(root_metadata)
+        or not stat.S_ISDIR(root_metadata.st_mode)
+    ):
+        raise LifecycleError(
+            f"project root must be a physical directory for document access: {project_root}"
+        )
+    try:
+        relative = path.relative_to(project_root)
+    except ValueError as error:
+        raise LifecycleError(f"document escapes the project root: {path}") from error
+    if not relative.parts or ".." in relative.parts:
+        raise LifecycleError(f"document path is not a contained file: {path}")
+
+    current = project_root
+    for component in relative.parts[:-1]:
+        current /= component
+        metadata = _lstat(current)
+        if metadata is None:
+            break
+        if _metadata_is_linklike(metadata):
+            raise LifecycleError(
+                f"document ancestor must not be a symlink, junction, or reparse point: {current}"
+            )
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise LifecycleError(f"document ancestor must be a directory: {current}")
+
+
+def _read_document(
+    path: Path, *, project_root: Path, required: bool = True
+) -> Document | None:
+    _require_document_location(project_root, path)
+    initial = _lstat(path)
+    if initial is None:
         if required:
             raise LifecycleError(f"required file is missing: {path}")
         return None
-    if not path.is_file():
+    if _metadata_is_linklike(initial):
+        raise LifecycleError(
+            f"document must not be a symlink, junction, or reparse point: {path}"
+        )
+    if not stat.S_ISREG(initial.st_mode):
         raise LifecycleError(f"expected a file: {path}")
-    raw = path.read_bytes()
+
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor: int | None = os.open(path, flags)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise LifecycleError(
+                f"document must not be a symlink, junction, or reparse point: {path}"
+            ) from error
+        raise
+    try:
+        opened = os.fstat(descriptor)
+        current = _lstat(path)
+        _require_document_location(project_root, path)
+        # Windows has no O_NOFOLLOW; matching the opened handle to lstat before
+        # reading prevents a raced reparse target from contributing any bytes.
+        if (
+            current is None
+            or _metadata_is_linklike(current)
+            or not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or not _same_file_identity(initial, opened)
+            or not _same_file_identity(opened, current)
+        ):
+            raise LifecycleError(f"document changed while it was being opened: {path}")
+
+        stream = os.fdopen(descriptor, "rb")
+        descriptor = None
+        with stream:
+            before_read = os.fstat(stream.fileno())
+            raw = stream.read()
+            after_read = os.fstat(stream.fileno())
+        final = _lstat(path)
+        _require_document_location(project_root, path)
+        if (
+            final is None
+            or _metadata_is_linklike(final)
+            or not _same_file_snapshot(before_read, after_read)
+            or not _same_file_snapshot(after_read, final)
+        ):
+            raise LifecycleError(f"document changed while it was being read: {path}")
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
     bom = raw.startswith(b"\xef\xbb\xbf")
     try:
         text = raw.decode("utf-8-sig")
@@ -122,11 +244,13 @@ def _read_document(path: Path, *, required: bool = True) -> Document | None:
     newline = "\r\n" if b"\r\n" in raw else "\n"
     return Document(
         path=path,
+        project_root=project_root,
         raw=raw,
         text=text,
         newline=newline,
         bom=bom,
         existed=True,
+        identity=(after_read.st_dev, after_read.st_ino),
     )
 
 
@@ -135,9 +259,8 @@ def _same_path(left: Path, right: Path) -> bool:
 
 
 def _is_linklike(path: Path) -> bool:
-    return path.is_symlink() or (
-        hasattr(path, "is_junction") and path.exists() and path.is_junction()
-    )
+    metadata = _lstat(path)
+    return metadata is not None and _metadata_is_linklike(metadata)
 
 
 def _require_contained_directory(root: Path, path: Path, *, label: str) -> None:
@@ -259,7 +382,7 @@ def _load_project(root_value: str, *, allow_resumed_purge: bool = False) -> Proj
         resumed = True
     elif quarantine.exists():
         raise LifecycleError(f"purge quarantine already exists: {quarantine}")
-    marker = _read_document(coordination / "project.yaml")
+    marker = _read_document(coordination / "project.yaml", project_root=root)
     assert marker is not None
     return Project(root, coordination, marker, _parse_marker(marker), resumed)
 
@@ -330,19 +453,58 @@ def _remove_discovery_block(document: Document) -> str:
     return _remove_exact_block(document, matches[0], "supported Coordinator discovery")
 
 
-def _ensure_current_discovery(document: Document | None, path: Path) -> tuple[Document, str]:
+def _ensure_current_discovery(
+    document: Document | None, path: Path, *, project_root: Path
+) -> tuple[Document, str]:
     if document is None:
-        return _add_exact_block(None, path, DISCOVERY_BLOCK, "Coordinator discovery")
+        return _add_exact_block(
+            None,
+            path,
+            DISCOVERY_BLOCK,
+            "Coordinator discovery",
+            project_root=project_root,
+        )
     if document.text.count(_block_for(document, DISCOVERY_BLOCK)) == 1:
         return document, document.text
     normalized = _remove_discovery_block(document)
-    source = Document(document.path, document.raw, normalized, document.newline, document.bom)
-    return _add_exact_block(source, path, DISCOVERY_BLOCK, "Coordinator discovery")
+    source = Document(
+        path=document.path,
+        project_root=document.project_root,
+        raw=document.raw,
+        text=normalized,
+        newline=document.newline,
+        bom=document.bom,
+        existed=document.existed,
+        identity=document.identity,
+    )
+    return _add_exact_block(
+        source,
+        path,
+        DISCOVERY_BLOCK,
+        "Coordinator discovery",
+        project_root=project_root,
+    )
 
 
-def _add_exact_block(document: Document | None, path: Path, block: str, label: str) -> tuple[Document, str]:
+def _add_exact_block(
+    document: Document | None,
+    path: Path,
+    block: str,
+    label: str,
+    *,
+    project_root: Path,
+) -> tuple[Document, str]:
     if document is None:
-        empty = Document(path, b"", "", "\n", False, False)
+        _require_document_location(project_root, path)
+        empty = Document(
+            path=path,
+            project_root=project_root,
+            raw=b"",
+            text="",
+            newline="\n",
+            bom=False,
+            existed=False,
+        )
         return empty, block + "\n"
     rendered = _block_for(document, block)
     count = document.text.count(rendered)
@@ -359,7 +521,11 @@ def _add_exact_block(document: Document | None, path: Path, block: str, label: s
 
 
 def _coordinator_id(project: Project) -> str | None:
-    current = _read_document(project.coordination / "CURRENT.md", required=False)
+    current = _read_document(
+        project.coordination / "CURRENT.md",
+        project_root=project.root,
+        required=False,
+    )
     if current is None:
         return None
     matches = re.findall(r"(?m)^\*\*Coordinator thread ID:\*\*\s*(\S+)\s*$", current.text)
@@ -456,33 +622,62 @@ def _legacy_inventory(project: Project) -> dict[str, object]:
     }
 
 
-def _atomic_write(path: Path, payload: bytes) -> None:
+def _validate_document_for_write(document: Document) -> None:
+    current = _read_document(
+        document.path,
+        project_root=document.project_root,
+        required=False,
+    )
+    if document.existed:
+        if (
+            current is None
+            or current.identity != document.identity
+            or current.raw != document.raw
+        ):
+            raise LifecycleError(
+                f"document changed after lifecycle planning: {document.path}"
+            )
+    elif current is not None:
+        raise LifecycleError(
+            f"document appeared after lifecycle planning: {document.path}"
+        )
+
+
+def _atomic_write(document: Document, payload: bytes) -> Document:
+    path = document.path
+    _require_document_location(document.project_root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile(prefix=path.name + ".", suffix=".tmp", dir=path.parent, delete=False)
+    handle = tempfile.NamedTemporaryFile(
+        prefix=path.name + ".", suffix=".tmp", dir=path.parent, delete=False
+    )
     temp = Path(handle.name)
     try:
         with handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        _validate_document_for_write(document)
         os.replace(temp, path)
+        written = _read_document(path, project_root=document.project_root)
+        assert written is not None
+        return written
     finally:
-        if temp.exists():
-            temp.unlink()
+        temp.unlink(missing_ok=True)
 
 
 def _apply_documents(changes: Iterable[tuple[Document, str]]) -> None:
     prepared = [(document, document.encode(text)) for document, text in changes if document.raw != document.encode(text)]
-    written: list[Document] = []
+    written: list[tuple[Document, Document]] = []
     try:
         for document, payload in prepared:
-            _atomic_write(document.path, payload)
-            written.append(document)
+            replacement = _atomic_write(document, payload)
+            written.append((document, replacement))
     except Exception:
-        for document in reversed(written):
+        for document, replacement in reversed(written):
             if document.existed:
-                _atomic_write(document.path, document.raw)
+                _atomic_write(replacement, document.raw)
             else:
+                _validate_document_for_write(replacement)
                 document.path.unlink(missing_ok=True)
         raise
 
@@ -550,15 +745,31 @@ def _init_operation(args: argparse.Namespace) -> dict[str, object]:
     )
     agents_path = root / "AGENTS.md"
     ignore_path = root / ".gitignore"
-    agents = _read_document(agents_path, required=False)
-    ignore = _read_document(ignore_path, required=False)
+    agents = _read_document(agents_path, project_root=root, required=False)
+    ignore = _read_document(ignore_path, project_root=root, required=False)
     agents_document, agents_text = _add_exact_block(
-        agents, agents_path, DISCOVERY_BLOCK, "Coordinator discovery"
+        agents,
+        agents_path,
+        DISCOVERY_BLOCK,
+        "Coordinator discovery",
+        project_root=root,
     )
     ignore_document, ignore_text = _add_exact_block(
-        ignore, ignore_path, IGNORE_BLOCK, "Coordinator ignore"
+        ignore,
+        ignore_path,
+        IGNORE_BLOCK,
+        "Coordinator ignore",
+        project_root=root,
     )
-    marker_document = Document(marker_path, b"", "", "\n", False, False)
+    marker_document = Document(
+        path=marker_path,
+        project_root=root,
+        raw=b"",
+        text="",
+        newline="\n",
+        bom=False,
+        existed=False,
+    )
     actions = [
         {"action": "create-enabled-schema-2-marker", "path": str(marker_path)},
         {"action": "create-empty-active-board", "path": str(coordination / "active")},
@@ -612,7 +823,7 @@ def _apply_schema_one_migration(project: Project, marker_text: str) -> None:
     board_paths = [project.coordination / "active", project.coordination / "archive"]
     created_directories: list[Path] = []
     backup_created = False
-    marker_replaced = False
+    marker_replacement: Document | None = None
     for path in board_paths:
         if _is_linklike(path):
             raise LifecycleError(f"schema-2 board path must not be linked: {path}")
@@ -630,15 +841,14 @@ def _apply_schema_one_migration(project: Project, marker_text: str) -> None:
             if not path.exists():
                 path.mkdir()
                 created_directories.append(path)
-        if project.marker.path.read_bytes() != project.marker.raw:
-            raise LifecycleError("project marker changed during migration planning")
         if any(any(path.iterdir()) for path in board_paths):
             raise LifecycleError("schema-2 board changed during migration planning")
-        _atomic_write(project.marker.path, project.marker.encode(marker_text))
-        marker_replaced = True
+        marker_replacement = _atomic_write(
+            project.marker, project.marker.encode(marker_text)
+        )
     except Exception:
-        if marker_replaced:
-            _atomic_write(project.marker.path, project.marker.raw)
+        if marker_replacement is not None:
+            _atomic_write(marker_replacement, project.marker.raw)
         for path in reversed(created_directories):
             try:
                 path.rmdir()
@@ -658,12 +868,13 @@ def _has_coordinator_discovery(document: Document | None) -> bool:
     ) or DISCOVERY_HEADING in document.text
 
 
-def _migration_operation(project: Project, args: argparse.Namespace) -> dict[str, object]:
+def _migration_operation(
+    project: Project, args: argparse.Namespace, agents: Document | None
+) -> dict[str, object]:
     if project.schema != 1:
         raise LifecycleError("only a schema-1 project can be migrated to schema 2")
     marker_text = _schema_two_marker(project)
     inventory = _legacy_inventory(project)
-    agents = _read_document(project.root / "AGENTS.md", required=False)
     native_actions = _native_actions(project, activate=False)
     blockers: list[str] = []
     if project.enabled:
@@ -753,12 +964,16 @@ def project_operation(args: argparse.Namespace) -> dict[str, object]:
         return _init_operation(args)
     purge = args.action == "purge"
     project = _load_project(args.project_root, allow_resumed_purge=purge)
-    if args.action == "migrate":
-        return _migration_operation(project, args)
     agents_path = project.root / "AGENTS.md"
     ignore_path = project.root / ".gitignore"
-    agents = _read_document(agents_path, required=False)
-    ignore = _read_document(ignore_path, required=False)
+    agents = _read_document(
+        agents_path, project_root=project.root, required=False
+    )
+    ignore = _read_document(
+        ignore_path, project_root=project.root, required=False
+    )
+    if args.action == "migrate":
+        return _migration_operation(project, args, agents)
     actions: list[dict[str, str]] = []
     changes: list[tuple[Document, str]] = []
 
@@ -788,7 +1003,9 @@ def project_operation(args: argparse.Namespace) -> dict[str, object]:
         if marker_text != project.marker.text:
             actions.append({"action": "set-marker-enabled", "path": str(project.marker.path)})
             changes.append((project.marker, marker_text))
-        agents_document, agents_text = _ensure_current_discovery(agents, agents_path)
+        agents_document, agents_text = _ensure_current_discovery(
+            agents, agents_path, project_root=project.root
+        )
         if agents_text != agents_document.text:
             actions.append({"action": "restore-discovery-block", "path": str(agents_path)})
             changes.append((agents_document, agents_text))

@@ -16,6 +16,8 @@ On Windows run all snippets in a Bash-capable shell such as Git Bash; do not tra
 
 **Core principle:** Detect existing isolation first. Then use native tools. Then fall back to git. Never fight the harness.
 
+**Security boundary:** Consent to create or use a worktree authorizes checkout isolation only. It does not authorize dependency installation, compilation, tests, other repository code, network access, or credential use. A worktree is not a process, network, or credential sandbox.
+
 **Announce at start:** "I'm using worktree mode to set up an isolated workspace."
 
 <a id="src-using-git-worktrees-step-0-detect-existing-isolation"></a>
@@ -36,7 +38,7 @@ BRANCH=$(git branch --show-current)
 git rev-parse --show-superproject-working-tree 2>/dev/null
 ```
 
-**If `GIT_DIR != GIT_COMMON` (and not a submodule):** You are already in a linked worktree. Skip to Step 2 (Project Setup). Do NOT create another worktree.
+**If `GIT_DIR != GIT_COMMON` (and not a submodule):** You are already in a linked worktree. Skip to Step 2 (Setup Authority Review). Do NOT create another worktree.
 
 Report with branch state:
 - On a branch: "Already in isolated workspace at `<path>` on branch `<name>`."
@@ -110,38 +112,33 @@ git worktree add "$path" -b "$BRANCH_NAME"
 cd "$path"
 ```
 
-**Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell the user the sandbox blocked worktree creation and you're working in the current directory instead. Then run setup and baseline tests in place.
+**Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell the user the sandbox blocked worktree creation and you're working in the current directory instead. Continue to Step 2, but do not run setup or tests solely because of the fallback.
 
 <a id="src-using-git-worktrees-step-2-project-setup"></a>
-### Step 2: Project Setup
+### Step 2: Review Project Setup Authority
 
-Auto-detect and run appropriate setup:
+Manifest presence tells you what to inspect, never what to execute. Before running any setup command, inspect the relevant files as data and identify:
 
-```bash
-# Node.js
-if [ -f package.json ]; then npm install; fi
+- the exact proposed command and why it is needed;
+- lockfiles, package sources, registries, downloads, and other network use;
+- Node lifecycle scripts; Rust `build.rs`, procedural macros, and build dependencies; Python build backends, editable-install hooks, and VCS requirements; Go module replacements and tool directives; and equivalent executable hooks for other ecosystems;
+- test commands, configuration, plugins, wrappers, fixtures, and generated-code steps that can execute repository or dependency code; and
+- required credentials, environment variables, filesystem writes, global installs, services, or other host mutations.
 
-# Rust
-if [ -f Cargo.toml ]; then cargo build; fi
+Compare those effects with the user and host instructions. A request to create or use a worktree is not setup authority. A broader implementation or testing request may already authorize proportionate local setup and tests; honor that existing authority without asking again, but do not infer network access, credential exposure, global installation, or unrelated host mutation from repository files.
 
-# Python
-if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-if [ -f pyproject.toml ] && grep -q '\[tool\.poetry\]' pyproject.toml; then poetry install
-elif [ -f pyproject.toml ] && [ ! -f requirements.txt ]; then pip install -e .; fi
+If the existing request does not authorize every required effect, stop and ask for the missing setup, execution, network, credential, or host-mutation decision. Show the exact proposed commands and the effects found during inspection. Do not run any of them while waiting.
 
-# Go
-if [ -f go.mod ]; then go mod download; fi
-```
+When the effects are authorized, select only commands justified by the inspected project contract. Prefer locked, frozen, and offline modes where they satisfy the task. Use the host's least-privilege sandbox and a sanitized environment that exposes only required variables and credentials; do not disable sandboxing, pass unrelated secrets, change global package state, or treat the worktree as containment. Record the commands and effects actually authorized.
+
+If setup is not authorized or not needed, skip it. Continue to Step 3 only to make its separate test-execution decision.
 
 <a id="src-using-git-worktrees-step-3-verify-clean-baseline"></a>
 ### Step 3: Verify Clean Baseline
 
-Run tests to ensure workspace starts clean:
+Baseline tests are valuable, but test runners, plugins, fixtures, and build steps execute repository-controlled code. A worktree-only request must not run tests. Inspect the test path as described in Step 2, determine the exact project-appropriate command, and run it only when the existing request authorizes its execution and effects or the user supplies the missing authority. Apply the same sandbox, environment, network, and credential controls.
 
-```bash
-# Use project-appropriate command
-npm test / cargo test / pytest / go test ./...
-```
+If tests are not authorized, report that they were not run and why. The isolated checkout remains usable for inspection or the next authorized step.
 
 **If tests fail:** Report failures, ask whether to proceed or investigate.
 
@@ -152,9 +149,12 @@ npm test / cargo test / pytest / go test ./...
 
 ```
 Worktree ready at <full-path>
+Setup complete (<exact commands>)
 Tests passing (<N> tests, 0 failures)
 Ready to implement <feature-name>
 ```
+
+When setup or tests were not run, replace the corresponding line with `Setup: not run — <reason>` or `Baseline tests: not run — <reason>`; never imply they passed.
 
 <a id="src-using-git-worktrees-quick-reference"></a>
 ### Quick Reference
@@ -170,7 +170,11 @@ Ready to implement <feature-name>
 | Both exist | Use `.worktrees/` |
 | Neither exists | Check instruction file, then default `.worktrees/` |
 | Directory not ignored | Add to .gitignore, stage, ask before commit |
-| Permission error on create | Sandbox fallback, work in place |
+| Permission error on create | Sandbox fallback, work in place; reassess setup/test authority |
+| Worktree-only request | Create or use isolation; do not run setup or tests |
+| Broader request already authorizes local execution | Inspect effects, then run only proportionate approved commands |
+| Manifest or test configuration exists | Inspect hooks, dependencies, network, credentials, and exact commands |
+| A required effect lacks authority | Stop and ask for that concrete decision |
 | Tests fail during baseline | Report failures + ask |
 | No recognized manifest (package.json/Cargo.toml/requirements.txt/pyproject.toml/go.mod) | Skip dependency install |
 
@@ -183,4 +187,5 @@ Ready to implement <feature-name>
 | "`git worktree add` is quicker than hunting for a native tool" | A native tool (e.g. `EnterWorktree`) owns placement, branching, and cleanup. Bypassing it is the #1 mistake — it creates phantom state your harness can't see or manage. |
 | "The worktree directory is surely ignored already" | Run `git check-ignore`. An unignored worktree directory commits the whole tree into the repo. |
 | "Any directory name works" | Explicit instructions beat an existing project-local directory, which beats the `.worktrees/` default. |
-| "The workspace is fresh — baseline tests can wait" | A dirty baseline makes every later failure ambiguous. Run the tests now; proceeding past failures is the user's call. |
+| "The manifest makes the setup command obvious" | Manifests and lockfiles are repository-controlled evidence. Inspect their executable and external effects before selecting a command. |
+| "The workspace is fresh — run baseline tests now" | A baseline is useful only after its repository-code execution and other effects are authorized and inspected. |

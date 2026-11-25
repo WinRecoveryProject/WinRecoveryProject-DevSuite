@@ -1,4 +1,4 @@
-"""Union guarantee for the new devsuite-git skill (shared with Plugin-Skill-Studio studio-git)."""
+"""Union and integrity guarantees for the consolidated devsuite-git skill."""
 from __future__ import annotations
 
 import hashlib
@@ -14,20 +14,20 @@ from tests.test_review_consolidation import check_matrix, read_json  # noqa: E40
 
 CONSOLIDATION = ROOT / "references" / "consolidation"
 MODES = ROOT / "skills" / "devsuite-git" / "modes"
-SHARED = ("worktree.md", "finish.md", "conflicts.md", "safety.md",
+PINNED = ("worktree.md", "finish.md", "conflicts.md", "safety.md",
           "safety/scripts/block-dangerous-git.sh", "safety/scripts/classify_git_command.py")
 
 
 class GitConsolidationTests(unittest.TestCase):
-    def test_shared_git_modes_match_hashes(self):
+    def test_pinned_git_modes_match_hashes(self):
         pinned = read_json(CONSOLIDATION / "shared-git-modes.json")["files"]
-        for name in SHARED:
+        for name in PINNED:
             self.assertIn(name, pinned)
         for name, digest in pinned.items():
             data = (MODES / name).read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
             self.assertEqual(hashlib.sha256(data).hexdigest(), digest, name)
 
-    def test_shared_git_modes_have_no_package_links(self):
+    def test_pinned_git_modes_have_no_package_links(self):
         for name in read_json(CONSOLIDATION / "shared-git-modes.json")["files"]:
             if not name.endswith(".md"):
                 continue
@@ -56,6 +56,26 @@ class GitConsolidationTests(unittest.TestCase):
         for request, mode in (("fix this merge conflict", "conflicts"), ("block a force push to main", "safety")):
             result = route(request)
             self.assertEqual((result["skill"], result["mode"]), ("devsuite-git", mode), request)
+
+    def test_worktree_setup_requires_separate_execution_authority(self):
+        text = (MODES / "worktree.md").read_text(encoding="utf-8")
+        self.assertIn("Consent to create or use a worktree authorizes checkout isolation only.", text)
+        self.assertIn("Manifest presence tells you what to inspect, never what to execute.", text)
+        self.assertIn("If the existing request does not authorize every required effect, stop and ask", text)
+        self.assertIn("A worktree-only request must not run tests.", text)
+        self.assertIn("do not run setup or tests solely because of the fallback", text)
+        for executable_path in ("lifecycle scripts", "`build.rs`", "build backends", "test commands"):
+            self.assertIn(executable_path, text)
+        for automatic_sink in (
+            "if [ -f package.json ]; then npm install; fi",
+            "if [ -f Cargo.toml ]; then cargo build; fi",
+            "if [ -f requirements.txt ]; then pip install -r requirements.txt; fi",
+            "then poetry install",
+            "then pip install -e .; fi",
+            "if [ -f go.mod ]; then go mod download; fi",
+            "Then run setup and baseline tests in place.",
+        ):
+            self.assertNotIn(automatic_sink, text)
 
 
 if __name__ == "__main__":

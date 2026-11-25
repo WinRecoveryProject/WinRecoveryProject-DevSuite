@@ -89,7 +89,7 @@ def package(output):
     files = {
         **{name: (ROOT / name).read_bytes() for name in (*LICENSE_FILES, *LOCAL_FILES)},
         **{f"skills/{name}/SKILL.md": local_guide(name) for name in LOCAL_WORKFLOWS},
-        # Mode files ship unchanged; the shared ones must stay byte-identical with Studio.
+        # Mode files ship unchanged from this source; pinned hashes include local security adaptations.
         **{f"skills/{name}/modes/{mode.relative_to(ROOT / 'skills' / name / 'modes').as_posix()}": mode.read_bytes()
            for name in LOCAL_WORKFLOWS for mode in sorted((ROOT / "skills" / name / "modes").rglob("*")) if mode.is_file()},
         manifest_path: manifest,

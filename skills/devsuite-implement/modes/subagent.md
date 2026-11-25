@@ -40,7 +40,7 @@ Use execute mode for a parallel session. Return to planning when tasks are tight
    bash <skill-dir>/modes/subagent/scripts/sdd-workspace PLAN_FILE
    ```
 
-   The command prints `<repo-root>/.skillquiver/sdd/<plan-basename>-<path-hash>/`. This git-ignored directory owns every artifact for this plan: ledger, briefs, reports, and review packages. Never reuse another plan's directory.
+   The command prints a stable private host-temporary path scoped by repository and plan. This directory owns every artifact for the plan: ledger, briefs, reports, and review packages. Never reuse another plan's directory. The helper rejects links and reparse points at the former repository-local path and publishes generated files atomically.
 4. Inspect `<workspace>/progress.md`:
    - If its first line names this plan, treat every `Task <N>: complete` line as authoritative and resume at the first incomplete task.
    - If a task ends with a fix-round entry, resume at the next round.
@@ -49,7 +49,7 @@ Use execute mode for a parallel session. Return to planning when tasks are tight
 6. Read the plan once, record its context and Global Constraints, and create one todo per task.
 7. Before Task 1, scan the complete plan for contradictions between tasks, Global Constraints, and the review rubric. Present all conflicts in one batched question beside the binding plan text. Proceed immediately when the scan is clean.
 
-The ledger is the recovery map after compaction. Trust it and `git log` over conversation memory. `git clean -fdx` destroys this scratch workspace; recover task state from git history if that happens.
+The ledger is the recovery map after compaction. Trust it and `git log` over conversation memory. Host temporary-directory cleanup can destroy this scratch workspace; recover task state from git history if that happens.
 
 Completion criterion: the workspace belongs to the active plan, its ledger identity is correct, completed tasks are not re-dispatched, and every plan conflict is resolved before implementation.
 

@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# Resolve and ensure the working-tree directory SDD uses for one plan's
+# Resolve and ensure the private host-temporary directory SDD uses for one plan's
 # short-lived artifacts: task briefs, implementer reports, review packages,
 # and the progress ledger. Print the plan directory's absolute path.
 #
-# One directory per plan (.skillquiver/sdd/<plan-basename>-<path-hash>/) so
+# One directory per repository and plan (<host-temp>/skillquiver-sdd-*/
+# <repo-hash>/<plan-basename>-<path-hash>/) so
 # plans with the same filename can never read or overwrite each other's
 # artifacts. A stale ledger misread as current progress makes controllers
 # skip whole task sequences — plan-scoping removes that failure structurally.
 #
-# The workspace lives in the working tree (not under .git/) because Claude Code
-# treats .git/ as a protected path and denies agent writes there — which blocks
-# an implementer subagent from writing its report file. A self-ignoring
-# .gitignore at .skillquiver/sdd/ keeps every plan's workspace out of
-# `git status` and out of accidental commits without modifying any tracked file.
+# The workspace lives outside the repository so tracked symlinks, junctions, and
+# reparse points cannot redirect artifact writes. The helper creates private
+# no-follow directories and rejects links left at the former repository path.
 #
 # Single source of truth for the workspace location, so task-brief and
 # review-package cannot drift to different directories.
@@ -41,8 +40,5 @@ case "$plan_path" in
 esac
 plan_hash=$(printf '%s' "$plan_key" | git hash-object --stdin)
 slug="$plan_name-${plan_hash:0:12}"
-base="$root/.skillquiver/sdd"
-dir="$base/$slug"
-mkdir -p "$dir"
-printf '*\n' > "$base/.gitignore"
-cd "$dir" && pwd
+helper="$(cd "$(dirname "$0")" && pwd -P)/sdd-artifact"
+python "$helper" workspace "$root" "$slug"

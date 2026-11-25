@@ -1,21 +1,22 @@
 {
   "schemaVersion": 1,
-  "note": "Byte-identical in Plugin-Skill-Studio skills/studio-execute/modes and DevSuite skills/devsuite-implement/modes (including subagent/); hashed with LF line endings.",
+  "note": "Pinned DevSuite execution sources, hashed with LF line endings. The subagent workspace and artifact scripts are security-adapted from Plugin-Skill-Studio studio-execute.",
   "files": {
     "durable.md": "ee18c709e00b805f4fdb901b7ca803f3378fbb1e4f196fa66e7cf5c213712068",
     "execute.md": "020ce1930cfee2a32c7691b9b8c39b64206265acd25619598811653197a11554",
     "implement.md": "29a609a7a4cf5c989f3bc0948da43761dcd54c5fbcd87ab7fa4834ee89bc3011",
     "parallel.md": "798417395c9da8f8b029073ec99e224ce7698aa650d795561df758ff956b27db",
     "spec-run.md": "30e0a0f90e3d57f95f4ef841109e03cafd0dcd9cb570cb94db145917521ba7a2",
-    "subagent.md": "2f72bae42e12bce7b472f15bfac97e42a0208ca2763609cc4db65cfb38220a03",
+    "subagent.md": "80ead12fc72e5090b3a18bcd838bcca9267d1bbf1ac379b8d294d5b73821cff3",
     "subagent/implementer-prompt.md": "4b43a9e14efe68839e82b0a9e154145c0367b17a47bd43b27e3daad711b520f8",
     "subagent/re-review-prompt.md": "d24124e2579a6493c5546bd754341761f89cc1c3ce8c17ad5de1af2aafcf2678",
     "subagent/references/dispatch-and-model-selection.md": "285403c9c978695c9f63876d85829c258b15618d1fbaf6cf4bcc3a19a2b928d2",
     "subagent/references/review-and-fix-loop.md": "6f8f6c5d0a21fe7e62e912818a1effc04680175826e42f606a289e1e1c5d8daf",
     "subagent/references/workflow-example.md": "598dfce8dc5b130b4634ab85ed9a0fe1630219583e24c1b948444cbb3d022954",
-    "subagent/scripts/review-package": "633d4d11af8570d741c4a9d189905becc9cc0107d9d3020dde028f2eeddabf66",
-    "subagent/scripts/sdd-workspace": "c90d82032fe3e42b679f9fcb9acf1df71a186ad1944642b251daad13216f1920",
-    "subagent/scripts/task-brief": "544146b5850e88a228ff849770f68487cdb5ebc85a410086ad12e709e3701c8b",
+    "subagent/scripts/review-package": "f70d6632b0d66912f4e48aebdf7adb2d31696c5f7fdc73a6bb394a91ed46f178",
+    "subagent/scripts/sdd-artifact": "a34a26afc6ca8e4bd4a109ea9090f07000ad8acbf660083fbec6708bc433de1d",
+    "subagent/scripts/sdd-workspace": "5229341e50e7747860fc556509fa8ec7f856c70f8786601be48e2532e796506c",
+    "subagent/scripts/task-brief": "6513d10302420d7df1f0d52b0c586b438266a6932f432f8f9079924efece6425",
     "subagent/task-reviewer-prompt.md": "f6f6dd5c47dea5c408b0242ed42b2d2b98ede177c58b43b8925af80f6eb1b0e3"
   }
 }

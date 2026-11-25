@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""Create private SDD workspaces and publish artifacts without following links."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import secrets
+import shutil
+import stat
+import sys
+import tempfile
+
+
+class ArtifactError(RuntimeError):
+    """An artifact path cannot be used without crossing a trust boundary."""
+
+
+_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+
+def _is_link_or_reparse(value: os.stat_result) -> bool:
+    return stat.S_ISLNK(value.st_mode) or bool(
+        getattr(value, "st_file_attributes", 0) & _REPARSE_POINT
+    )
+
+
+def _validate_component(value: str, label: str) -> None:
+    separators = {os.sep}
+    if os.altsep:
+        separators.add(os.altsep)
+    if not value or value in {".", ".."} or any(separator in value for separator in separators):
+        raise ArtifactError(f"invalid {label}: {value!r}")
+
+
+def _inspect_legacy_path(path: Path, *, directory: bool) -> bool:
+    """Reject planted links in the former repository-local workspace."""
+    try:
+        value = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if _is_link_or_reparse(value):
+        raise ArtifactError(f"refusing linked or reparse path: {path}")
+    expected = stat.S_ISDIR(value.st_mode) if directory else stat.S_ISREG(value.st_mode)
+    if not expected:
+        kind = "directory" if directory else "regular file"
+        raise ArtifactError(f"expected {kind} at legacy artifact path: {path}")
+    return True
+
+
+def _reject_legacy_links(repo_root: Path, slug: str) -> None:
+    legacy = repo_root / ".skillquiver"
+    if not _inspect_legacy_path(legacy, directory=True):
+        return
+    sdd = legacy / "sdd"
+    if not _inspect_legacy_path(sdd, directory=True):
+        return
+    _inspect_legacy_path(sdd / ".gitignore", directory=False)
+    _inspect_legacy_path(sdd / slug, directory=True)
+
+
+def _private_name() -> str:
+    if hasattr(os, "geteuid"):
+        return f"skillquiver-sdd-{os.geteuid()}"
+    return "skillquiver-sdd"
+
+
+def _posix_dir_flags() -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if not nofollow or not directory:
+        raise ArtifactError("this platform lacks required no-follow directory opens")
+    return os.O_RDONLY | nofollow | directory | getattr(os, "O_CLOEXEC", 0)
+
+
+def _open_private_child(parent_fd: int, name: str) -> int:
+    try:
+        os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    child_fd = os.open(name, _posix_dir_flags(), dir_fd=parent_fd)
+    value = os.fstat(child_fd)
+    if not stat.S_ISDIR(value.st_mode):
+        os.close(child_fd)
+        raise ArtifactError(f"private artifact component is not a directory: {name}")
+    if hasattr(os, "geteuid") and value.st_uid != os.geteuid():
+        os.close(child_fd)
+        raise ArtifactError(f"private artifact component has another owner: {name}")
+    if stat.S_IMODE(value.st_mode) & 0o077:
+        os.close(child_fd)
+        raise ArtifactError(f"private artifact component is accessible by other users: {name}")
+    return child_fd
+
+
+def _posix_workspace(temp_root: str, parts: tuple[str, ...]) -> Path:
+    current_fd = os.open(temp_root, _posix_dir_flags())
+    try:
+        for part in parts:
+            next_fd = _open_private_child(current_fd, part)
+            os.close(current_fd)
+            current_fd = next_fd
+    finally:
+        os.close(current_fd)
+    return Path(temp_root).joinpath(*parts)
+
+
+def _windows_workspace(temp_root: str, parts: tuple[str, ...]) -> Path:
+    current = Path(temp_root)
+    for part in parts:
+        current = current / part
+        try:
+            current.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        value = os.lstat(current)
+        if _is_link_or_reparse(value) or not stat.S_ISDIR(value.st_mode):
+            raise ArtifactError(f"private artifact component is linked or invalid: {current}")
+    return current
+
+
+def _is_within(root: Path, candidate: str) -> bool:
+    try:
+        common = os.path.commonpath((str(root), candidate))
+    except ValueError:
+        return False
+    return os.path.normcase(common) == os.path.normcase(str(root))
+
+
+def create_workspace(repo_root: str, slug: str) -> Path:
+    _validate_component(slug, "workspace name")
+    root = Path(repo_root).resolve(strict=True)
+    if not root.is_dir():
+        raise ArtifactError(f"repository root is not a directory: {root}")
+    _reject_legacy_links(root, slug)
+
+    configured_temp = os.path.abspath(tempfile.gettempdir())
+    temp_root = os.path.realpath(configured_temp)
+    temp_value = os.lstat(temp_root)
+    if _is_link_or_reparse(temp_value) or not stat.S_ISDIR(temp_value.st_mode):
+        raise ArtifactError(f"host temporary root is linked or invalid: {temp_root}")
+    if _is_within(root, configured_temp) or _is_within(root, temp_root):
+        raise ArtifactError("host temporary root must be outside the repository")
+    repo_key = hashlib.sha256(os.fsencode(os.path.normcase(str(root)))).hexdigest()[:20]
+    parts = (_private_name(), repo_key, slug)
+    if os.name == "posix":
+        return _posix_workspace(temp_root, parts)
+    return _windows_workspace(temp_root, parts)
+
+
+def _check_destination(value: os.stat_result, path: str) -> None:
+    if _is_link_or_reparse(value):
+        raise ArtifactError(f"refusing linked or reparse artifact: {path}")
+    if not stat.S_ISREG(value.st_mode):
+        raise ArtifactError(f"artifact destination is not a regular file: {path}")
+
+
+def _copy_stdin(file_descriptor: int) -> None:
+    with os.fdopen(file_descriptor, "wb") as output:
+        shutil.copyfileobj(sys.stdin.buffer, output)
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def _posix_parent(path: str) -> tuple[int, str, str]:
+    absolute = os.path.abspath(path)
+    parent, leaf = os.path.split(absolute)
+    _validate_component(leaf, "artifact filename")
+    current_fd = os.open(os.sep, _posix_dir_flags())
+    try:
+        for part in parent.split(os.sep):
+            if not part:
+                continue
+            next_fd = os.open(part, _posix_dir_flags(), dir_fd=current_fd)
+            os.close(current_fd)
+            current_fd = next_fd
+    except BaseException:
+        os.close(current_fd)
+        raise
+    return current_fd, leaf, absolute
+
+
+def _posix_write(path: str) -> None:
+    parent_fd, leaf, absolute = _posix_parent(path)
+    temporary = f".sdd-{secrets.token_hex(12)}.tmp"
+    created = False
+    try:
+        try:
+            existing = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            _check_destination(existing, absolute)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        temporary_fd = os.open(temporary, flags, 0o600, dir_fd=parent_fd)
+        created = True
+        _copy_stdin(temporary_fd)
+        os.replace(temporary, leaf, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        created = False
+    finally:
+        if created:
+            try:
+                os.unlink(temporary, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        os.close(parent_fd)
+
+
+def _windows_parent(path: str) -> tuple[Path, Path]:
+    absolute = Path(os.path.abspath(path))
+    _validate_component(absolute.name, "artifact filename")
+    current = Path(absolute.anchor)
+    for part in absolute.parent.parts[1:]:
+        current = current / part
+        value = os.lstat(current)
+        if _is_link_or_reparse(value) or not stat.S_ISDIR(value.st_mode):
+            raise ArtifactError(f"artifact parent is linked or invalid: {current}")
+    return absolute.parent, absolute
+
+
+def _windows_write(path: str) -> None:
+    parent, absolute = _windows_parent(path)
+    try:
+        existing = os.lstat(absolute)
+    except FileNotFoundError:
+        pass
+    else:
+        _check_destination(existing, str(absolute))
+    temporary = parent / f".sdd-{secrets.token_hex(12)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    temporary_fd = os.open(temporary, flags, 0o600)
+    try:
+        _copy_stdin(temporary_fd)
+        os.replace(temporary, absolute)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def write_artifact(path: str) -> None:
+    if os.name == "posix":
+        _posix_write(path)
+    else:
+        _windows_write(path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    workspace = commands.add_parser("workspace")
+    workspace.add_argument("repo_root")
+    workspace.add_argument("slug")
+    write = commands.add_parser("write")
+    write.add_argument("path")
+    arguments = parser.parse_args(argv)
+    try:
+        if arguments.command == "workspace":
+            print(create_workspace(arguments.repo_root, arguments.slug).as_posix())
+        else:
+            write_artifact(arguments.path)
+    except (ArtifactError, OSError) as error:
+        print(f"sdd-artifact: {error}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
